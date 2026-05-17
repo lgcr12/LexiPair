@@ -17,6 +17,13 @@ const apiKey = provider === 'mimo' ? process.env.MIMO_API_KEY : process.env.OPEN
 const dataDir = path.resolve(process.cwd(), process.env.SYNC_DATA_DIR || 'server-data/accounts');
 
 app.use(express.json({ limit: '1mb' }));
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  return next();
+});
 
 async function ensureDataDir() {
   await fs.mkdir(dataDir, { recursive: true });

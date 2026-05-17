@@ -49,9 +49,12 @@ AI_MODEL=mimo-v2-flash
 MIMO_API_KEY=your-mimo-key-here
 OPENAI_TIMEOUT_MS=30000
 PORT=8787
+VITE_API_BASE_URL=http://YOUR_MAC_LAN_IP:8787
 ```
 
 Key 只放在 `.env`，不要提交到 GitHub。`.gitignore` 已忽略 `.env`。
+
+`VITE_API_BASE_URL` 是 iOS/Capacitor 真机包访问后端的地址。Web 开发时可以继续用 Vite 的 `/api` 代理；打包 IPA 前要把它改成运行 `npm run dev:api` 那台电脑的局域网地址，例如 `http://172.20.10.4:8787`，然后重新执行 `npm run cap:sync` 和 IPA 打包。
 
 ## 常用命令
 
@@ -90,6 +93,13 @@ POST /api/ai/insight
 - `examples`: 例句或填空
 
 前端会缓存 AI 结果，下次打开同一词组不需要重复生成。
+
+如果 iPhone 上显示 AI fallback 或同步失败，先确认：
+
+- Mac 和 iPhone 在同一局域网。
+- Mac 已运行 `npm run dev:api`。
+- `.env` 里的 `VITE_API_BASE_URL` 是 Mac 当前局域网 IP。
+- 改完 `.env` 后已经重新构建并同步 iOS 工程。
 
 ## 同步接口
 

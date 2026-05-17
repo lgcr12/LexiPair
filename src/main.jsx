@@ -36,6 +36,21 @@ import { hongbaoshuGroups } from './data/hongbaoshu.js';
 import { hongbaoshuWordGroups } from './data/hongbaoshu-words.js';
 import './styles.css';
 
+const configuredApiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const isCapacitorRuntime = typeof window !== 'undefined' && window.location.protocol === 'capacitor:';
+const apiBaseUrl = configuredApiBase;
+
+function apiUrl(path) {
+  return `${apiBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+async function apiFetch(path, options) {
+  if (isCapacitorRuntime && !apiBaseUrl) {
+    throw new Error('iOS API 地址未配置，请设置 VITE_API_BASE_URL 后重新打包');
+  }
+  return fetch(apiUrl(path), options);
+}
+
 const starterGroups = [
   {
     id: 'g1',
@@ -497,14 +512,14 @@ function buildAccountSnapshot({ groups, progress, installedBooks, aiInsights, of
 }
 
 async function pullAccountData(email) {
-  const response = await fetch(`/api/sync/${encodeURIComponent(normalizeEmail(email))}`);
+  const response = await apiFetch(`/api/sync/${encodeURIComponent(normalizeEmail(email))}`);
   if (!response.ok) throw new Error('同步拉取失败');
   const payload = await response.json();
   return payload.data || null;
 }
 
 async function pushAccountData(email, data) {
-  const response = await fetch(`/api/sync/${encodeURIComponent(normalizeEmail(email))}`, {
+  const response = await apiFetch(`/api/sync/${encodeURIComponent(normalizeEmail(email))}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ data })
@@ -1867,7 +1882,7 @@ function App() {
     setAiLoadingId(group.id);
     const compareWords = group.words.length === 1 ? findSimilarWords(group, group.words[0]) : [];
     try {
-      const response = await fetch('/api/ai/insight', {
+      const response = await apiFetch('/api/ai/insight', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -1897,7 +1912,7 @@ function App() {
         [group.id]: {
           ...createAiInsight(group),
           provider: 'network-fallback',
-          error: error.message
+          error: `${error.message}${apiBaseUrl ? ` · API: ${apiBaseUrl}` : ''}`
         }
       }));
     } finally {
