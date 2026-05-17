@@ -1,0 +1,14 @@
+{
+  "appId": "com.lexipair.app",
+  "appName": "LexiPair",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "ios": {
+    "contentInset": "automatic",
+    "scrollEnabled": true,
+    "allowsLinkPreview": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}
