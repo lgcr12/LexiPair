@@ -9,8 +9,9 @@ LexiPair 是一个面向考研英语的易混词记忆工具，重点解决“�
 - 间隔复习：认识、模糊、不认识分别进入不同复习间隔。
 - 学习卡片：翻面、拖拽、发音入口、收藏、笔记、正确答案反馈。
 - 形近对比：只找词形相近的单词，避免同页但不像的词混入。
-- AI 辅助：接入 Mimo API，自动生成记忆口诀、差异总结、小测提示。
-- 多端同步：同一邮箱登录后，Web 与 iOS 使用同一套后端同步数据。
+- AI 辅助：接入 Mimo API，生成固定 JSON 结构的记忆口诀、差异总结、词形差异、搭配、小测提示。
+- AI 预生成：开始今日学习队列时，后台批量预生成最多 20 组 AI 解释。
+- 多端同步：支持 Supabase Auth + Postgres；未配置时自动退回本地文件同步。
 - 桌面工作台：右侧统计、搜索、同步、快捷复习入口已可交互。
 - iOS 图标：已设计 LexiPair App Icon，并提供自动生成图标脚本。
 
@@ -20,7 +21,7 @@ LexiPair 是一个面向考研英语的易混词记忆工具，重点解决“�
 - Native Shell: Capacitor 7
 - Backend: Express
 - AI: Mimo OpenAI-compatible Chat Completions API
-- Sync: Express file-store API, development-ready
+- Auth & Sync: Supabase Auth, Postgres, local file fallback
 - Icons: SVG source + Sharp asset generation
 
 ## 本地运行
@@ -49,12 +50,18 @@ AI_MODEL=mimo-v2-flash
 MIMO_API_KEY=your-mimo-key-here
 OPENAI_TIMEOUT_MS=30000
 PORT=8787
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
 VITE_API_BASE_URL=http://YOUR_MAC_LAN_IP:8787
 ```
 
 Key 只放在 `.env`，不要提交到 GitHub。`.gitignore` 已忽略 `.env`。
 
 `VITE_API_BASE_URL` 是 iOS/Capacitor 真机包访问后端的地址。Web 开发时可以继续用 Vite 的 `/api` 代理；打包 IPA 前要把它改成运行 `npm run dev:api` 那台电脑的局域网地址，例如 `http://172.20.10.4:8787`，然后重新执行 `npm run cap:sync` 和 IPA 打包。
+
+Supabase 配置后会启用邮箱 Magic Link 登录、Bearer token 校验、Postgres 快照同步和学习日志；未配置时仍可使用本地文件 fallback。
 
 ## 常用命令
 
@@ -89,10 +96,22 @@ POST /api/ai/insight
 - `summary`: 记忆重点
 - `mnemonic`: 口诀或联想
 - `contrast`: 与形近词的差异
+- `shapeDiff`: 词形差异
+- `rootTip`: 词根或最短记忆抓手
+- `collocations`: 高频搭配
+- `trap`: 易错警告
 - `quiz`: 自测提示
 - `examples`: 例句或填空
 
 前端会缓存 AI 结果，下次打开同一词组不需要重复生成。
+
+### AI Batch Prefetch
+
+```http
+POST /api/ai/batch-insights
+```
+
+输入最多 20 个词组，后台批量生成 AI 缓存，用于今日学习队列预热。
 
 如果 iPhone 上显示 AI fallback 或同步失败，先确认：
 
@@ -103,7 +122,7 @@ POST /api/ai/insight
 
 ## 同步接口
 
-当前提供开发版账号同步：
+配置 Supabase 后，同步接口会校验 `Authorization: Bearer <access_token>`，并写入 `account_snapshots` 与 `study_events`。未配置 Supabase 时使用本地文件 fallback。
 
 ```http
 GET  /api/sync/:email
@@ -123,10 +142,9 @@ POST /api/sync/:email
 数据默认存放在：
 
 ```text
-server-data/accounts
+Supabase: account_snapshots, study_events
+Fallback: server-data/accounts
 ```
-
-这套同步适合个人使用、局域网测试、Web 与 Capacitor iOS 共用同一后端验证。正式公开上线前应替换为 Supabase Auth + Postgres 或其他带鉴权的云数据库。
 
 ## iOS 打包
 

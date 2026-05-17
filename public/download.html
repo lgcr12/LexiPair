@@ -3,21 +3,52 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LexiPair IPA 下载</title>
+  <title>LexiPair 安装</title>
   <style>
-    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','PingFang SC',sans-serif;color:#1d1d1f}
-    main{width:min(92vw,520px);padding:34px;border-radius:32px;background:rgba(255,255,255,.82);box-shadow:0 24px 80px rgba(0,0,0,.08);border:1px solid rgba(255,255,255,.95)}
-    img{width:96px;height:96px;border-radius:22px;display:block;margin-bottom:22px}
-    h1{font-size:34px;margin:0 0 10px;letter-spacing:0}p{color:#5e5e63;line-height:1.6;margin:0 0 22px}.btn{display:flex;align-items:center;justify-content:center;height:56px;border-radius:999px;background:#0a84ff;color:#fff;text-decoration:none;font-weight:800;font-size:18px}.meta{margin-top:18px;font-size:13px;color:#86868b;word-break:break-all}
+    :root{color:#1d1d1f;background:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 85% 0,rgba(10,132,255,.14),transparent 32%),#f5f5f7}
+    main{width:min(100%,980px);margin:0 auto;padding:54px 22px 42px}
+    header{display:grid;grid-template-columns:96px 1fr;gap:22px;align-items:center;margin-bottom:38px}
+    img{width:96px;height:96px;border-radius:24px;box-shadow:0 18px 60px rgba(10,132,255,.18)}
+    h1{font-size:clamp(38px,7vw,72px);line-height:.98;margin:0 0 12px;letter-spacing:0}
+    p{color:#5e5e63;line-height:1.65;margin:0}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}
+    a{color:inherit}.btn{display:inline-flex;align-items:center;justify-content:center;min-height:56px;padding:0 26px;border-radius:999px;background:#0a84ff;color:#fff;text-decoration:none;font-weight:800;font-size:18px}
+    .ghost{background:#fff;color:#1d1d1f;border:1px solid rgba(0,0,0,.08)}
+    section{margin-top:26px;padding:28px;border-radius:28px;background:rgba(255,255,255,.86);border:1px solid rgba(0,0,0,.06);box-shadow:0 18px 70px rgba(0,0,0,.06)}
+    h2{font-size:24px;margin:0 0 18px}.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+    article{min-height:156px;padding:20px;border-radius:22px;background:#f5f5f7;border:1px solid rgba(0,0,0,.04)}
+    strong{display:block;font-size:18px;margin-bottom:10px}.num{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#0a84ff;color:#fff;font-weight:900;margin-bottom:16px}
+    .meta{margin-top:18px;font-size:13px;color:#86868b;word-break:break-all}.warning{background:#fff7e8;border-color:#ffd79a}.warning strong{color:#9a5d00}
+    @media (max-width:760px){main{padding-top:36px}header{grid-template-columns:1fr;text-align:left}.steps{grid-template-columns:1fr}section{padding:22px;border-radius:24px}.btn{width:100%}}
   </style>
 </head>
 <body>
   <main>
-    <img src="/icon-192.png" alt="LexiPair" />
-    <h1>LexiPair</h1>
-    <p>未签名 IPA，适合导入全能签/自签工具重签安装。Safari 下载后在“文件”中找到 LexiPair-unsigned.ipa。</p>
-    <a class="btn" href="/ipa/LexiPair-unsigned.ipa">下载 IPA</a>
-    <div class="meta">局域网地址：http://172.20.10.4:5173/download.html</div>
+    <header>
+      <img src="/icon-192.png" alt="LexiPair" />
+      <div>
+        <h1>LexiPair</h1>
+        <p>未签名 IPA 包。下载后用全能签导入、签名并安装，安装完成后到系统设置里信任对应描述文件。</p>
+        <div class="actions">
+          <a class="btn" href="/ipa/LexiPair-unsigned.ipa">下载 LexiPair-unsigned.ipa</a>
+          <a class="btn ghost" href="/">打开 Web 版</a>
+        </div>
+      </div>
+    </header>
+    <section>
+      <h2>全能签安装流程</h2>
+      <div class="steps">
+        <article><span class="num">1</span><strong>Safari 下载</strong><p>点击下载按钮，在文件 App 中确认文件名是 LexiPair-unsigned.ipa。</p></article>
+        <article><span class="num">2</span><strong>导入全能签</strong><p>打开全能签，选择导入 IPA，把刚下载的文件加入应用列表。</p></article>
+        <article><span class="num">3</span><strong>签名安装</strong><p>选择证书和描述文件，完成签名后点安装到桌面。</p></article>
+        <article><span class="num">4</span><strong>信任证书</strong><p>进入设置，信任开发者描述文件，再打开 LexiPair。</p></article>
+      </div>
+    </section>
+    <section class="warning">
+      <strong>同步与 AI</strong>
+      <p>iOS 端需要能访问同一个 LexiPair API 地址。局域网测试时手机和电脑要在同一网络；正式使用请把 API 部署到公网并重新打包 IPA。</p>
+      <div class="meta">当前下载入口：http://172.20.10.4:5173/download.html</div>
+    </section>
   </main>
 </body>
 </html>

@@ -239,6 +239,12 @@ p {
   color: #5e5e63;
 }
 
+.form-success {
+  color: #248a3d;
+  font-size: 13px;
+  font-weight: 720;
+}
+
 .login-actions {
   display: grid;
   gap: 12px;
@@ -804,6 +810,22 @@ p {
 .ai-result-grid span {
   color: #515154;
   line-height: 1.5;
+}
+
+.ai-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ai-chip-row span {
+  padding: 8px 10px;
+  border-radius: 999px;
+  color: #4b2f85;
+  background: rgba(94, 53, 177, 0.1);
+  font-size: 13px;
+  font-weight: 720;
 }
 
 .ai-assistant-panel small {

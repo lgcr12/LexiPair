@@ -90,6 +90,25 @@ create table if not exists devices (
   last_seen_at timestamptz not null default now()
 );
 
+create table if not exists account_snapshots (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  email text not null,
+  data jsonb not null default '{}'::jsonb,
+  synced_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists study_events (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  group_id text not null,
+  result text not null check (result in ('know', 'blurry', 'forgot')),
+  word text,
+  stage text,
+  level integer,
+  created_at timestamptz not null default now()
+);
+
 alter table profiles enable row level security;
 alter table word_groups enable row level security;
 alter table word_books enable row level security;
@@ -99,6 +118,8 @@ alter table study_progress enable row level security;
 alter table notes enable row level security;
 alter table ai_insights enable row level security;
 alter table devices enable row level security;
+alter table account_snapshots enable row level security;
+alter table study_events enable row level security;
 
 create policy "profiles are self readable" on profiles for select using (auth.uid() = id);
 create policy "profiles are self writable" on profiles for all using (auth.uid() = id) with check (auth.uid() = id);
@@ -121,3 +142,5 @@ create policy "progress is private" on study_progress for all using (auth.uid() 
 create policy "notes are private" on notes for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "ai insights are private" on ai_insights for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "devices are private" on devices for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "account snapshots are private" on account_snapshots for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "study events are private" on study_events for all using (auth.uid() = user_id) with check (auth.uid() = user_id);

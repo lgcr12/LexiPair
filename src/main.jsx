@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AnimatePresence, motion } from 'framer-motion';
+import { createClient } from '@supabase/supabase-js';
 import {
   Apple,
   ArrowDownToLine,
@@ -39,6 +40,13 @@ import './styles.css';
 const configuredApiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const isCapacitorRuntime = typeof window !== 'undefined' && window.location.protocol === 'capacitor:';
 const apiBaseUrl = configuredApiBase;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabase = supabaseUrl && supabaseAnonKey
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+  })
+  : null;
 
 function apiUrl(path) {
   return `${apiBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
@@ -48,7 +56,13 @@ async function apiFetch(path, options) {
   if (isCapacitorRuntime && !apiBaseUrl) {
     throw new Error('iOS API 地址未配置，请设置 VITE_API_BASE_URL 后重新打包');
   }
-  return fetch(apiUrl(path), options);
+  const headers = new Headers(options?.headers || {});
+  if (supabase) {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (token) headers.set('Authorization', `Bearer ${token}`);
+  }
+  return fetch(apiUrl(path), { ...options, headers });
 }
 
 const starterGroups = [
@@ -470,14 +484,16 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-function createProfile({ email, plan }) {
+function createProfile({ email, plan, authProvider = 'local', userId = null }) {
   const normalized = normalizeEmail(email);
   return {
     ...defaultProfile,
     id: normalized.replace(/[^a-z0-9]/g, '-'),
     name: normalized.split('@')[0] || 'Lexi Learner',
     email: normalized,
-    plan
+    plan,
+    authProvider,
+    userId
   };
 }
 
@@ -525,6 +541,16 @@ async function pushAccountData(email, data) {
     body: JSON.stringify({ data })
   });
   if (!response.ok) throw new Error('同步上传失败');
+  return response.json();
+}
+
+async function writeStudyEvent(event) {
+  const response = await apiFetch('/api/study-events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event })
+  });
+  if (!response.ok) throw new Error('学习日志同步失败');
   return response.json();
 }
 
@@ -621,16 +647,55 @@ function getBookGroups(groups, bookId) {
 
 function buildStudyQueue(groups, progress, bookId, dailyLimit = 20) {
   const bookGroups = getBookGroups(groups, bookId);
+  const now = Date.now();
+  const sortByRisk = (a, b) => {
+    const pa = progress[a.id] || {};
+    const pb = progress[b.id] || {};
+    return (pb.lapses || 0) - (pa.lapses || 0)
+      || (pb.forgot || 0) - (pa.forgot || 0)
+      || new Date(pa.nextDueAt || 0) - new Date(pb.nextDueAt || 0)
+      || (pa.count || 0) - (pb.count || 0);
+  };
+  const shortRecall = bookGroups
+    .filter((group) => {
+      const item = progress[group.id];
+      if (!item?.updatedAt || item.lastResult === 'know') return false;
+      const minutes = (now - new Date(item.updatedAt).getTime()) / 60000;
+      return minutes >= 8 && minutes <= 90;
+    })
+    .sort(sortByRisk);
   const due = bookGroups
-    .filter((group) => isDue(progress[group.id]))
-    .sort((a, b) => {
-      const pa = progress[a.id] || {};
-      const pb = progress[b.id] || {};
-      return (pb.lapses || 0) - (pa.lapses || 0) || (pa.count || 0) - (pb.count || 0);
+    .filter((group) => progress[group.id] && isDue(progress[group.id]))
+    .sort(sortByRisk);
+  const weak = bookGroups
+    .filter((group) => progress[group.id]?.lastResult === 'forgot' || progress[group.id]?.lastResult === 'blurry')
+    .sort(sortByRisk);
+  const newItems = bookGroups
+    .filter((group) => !progress[group.id])
+    .sort((a, b) => a.title.localeCompare(b.title));
+  const lanes = [
+    { items: shortRecall, quota: Math.ceil(dailyLimit * 0.2) },
+    { items: due, quota: Math.ceil(dailyLimit * 0.35) },
+    { items: newItems, quota: Math.ceil(dailyLimit * 0.35) },
+    { items: weak, quota: dailyLimit }
+  ];
+  const picked = [];
+  const seen = new Set();
+  lanes.forEach((lane) => {
+    lane.items.forEach((group) => {
+      if (picked.filter((item) => lane.items.includes(item)).length >= lane.quota) return;
+      if (seen.has(group.id) || picked.length >= dailyLimit) return;
+      seen.add(group.id);
+      picked.push(group);
     });
-  const newItems = bookGroups.filter((group) => !progress[group.id]);
-  const mixed = [...due, ...newItems.filter((group) => !due.some((item) => item.id === group.id))];
-  return mixed.slice(0, dailyLimit);
+  });
+  [...due, ...newItems, ...weak].forEach((group) => {
+    if (!seen.has(group.id) && picked.length < dailyLimit) {
+      seen.add(group.id);
+      picked.push(group);
+    }
+  });
+  return picked;
 }
 
 function findSimilarWords(group, word) {
@@ -754,6 +819,10 @@ function createAiInsight(group) {
       ? `${group.words[0].word}：${group.words[0].hint || group.words[0].meaning}`
       : group.words.map((item) => `${item.word} -> ${item.hint}`).join('；'),
     contrast: isSingleWord ? `${group.words[0].word}: ${group.words[0].meaning}${comparisonText ? `；相近词：${comparisonText}` : ''}` : meanings,
+    shapeDiff: isSingleWord ? `把 ${group.words[0].word} 和形近词逐字对照，优先看首尾和词缀。` : `${pairKey} 的首字母/尾部特征是 ${firstLetters} / ${endings}。`,
+    rootTip: isSingleWord ? group.words[0].hint || group.words[0].meaning : `先抓每个词的核心义，再用搭配锁定语境。`,
+    collocations: group.words.map((item) => item.collocation).filter(Boolean),
+    trap: isSingleWord ? '不要只背中文释义，要同时记词性和例句位置。' : '不要只看拼写相近，要用搭配和语义场景做最后判断。',
     examples: group.words.map((item) => item.sentence),
     quiz: isSingleWord
       ? `看到 ${group.words[0].word} 时，先说出主要释义，再补充词性：${group.words[0].pos}。`
@@ -798,17 +867,30 @@ function ProgressRing({ remaining, total, label = '组待学' }) {
 function LoginView({ onLogin }) {
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
   const submit = async (mode) => {
     const normalized = normalizeEmail(email);
-    if (mode === 'email' && !isValidEmail(normalized)) {
+    if ((mode === 'email' || mode === 'magic') && !isValidEmail(normalized)) {
       setError('请输入有效邮箱，例如 name@example.com');
       return;
     }
     setError('');
+    setMessage('');
     setLoading(true);
     try {
+      if (mode === 'magic' && supabase) {
+        const { error: signInError } = await supabase.auth.signInWithOtp({
+          email: normalized,
+          options: {
+            emailRedirectTo: window.location.origin
+          }
+        });
+        if (signInError) throw signInError;
+        setMessage('验证邮件已发送，点开邮件里的链接即可完成登录。');
+        return;
+      }
       await new Promise((resolve) => setTimeout(resolve, 260));
       const loginEmail = mode === 'guest' ? 'guest@lexipair.local' : mode === 'apple' ? 'apple@lexipair.local' : normalized;
       const plan = mode === 'apple' ? 'Apple ID' : mode === 'email' ? 'Email Sync' : 'Local First';
@@ -836,8 +918,9 @@ function LoginView({ onLogin }) {
             <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="邮箱地址" type="email" />
           </label>
           {error && <p className="form-error">{error}</p>}
-          <button className="primary-button" onClick={() => submit('email')} disabled={loading}>
-            {loading ? '正在进入...' : '邮箱登录'}
+          {message && <p className="form-success">{message}</p>}
+          <button className="primary-button" onClick={() => submit(supabase ? 'magic' : 'email')} disabled={loading}>
+            {loading ? '正在处理...' : supabase ? '发送邮箱验证码' : '邮箱登录'}
           </button>
           <button className="ghost-button" onClick={() => submit('guest')} disabled={loading}>
             游客体验
@@ -1228,10 +1311,27 @@ function CompareView({ group, aiInsight, aiLoading, onBack, onContinue, onStart,
               <span>{insight.contrast}</span>
             </article>
             <article>
+              <strong>词形差异</strong>
+              <span>{insight.shapeDiff}</span>
+            </article>
+            <article>
+              <strong>词根抓手</strong>
+              <span>{insight.rootTip}</span>
+            </article>
+            <article>
+              <strong>易错警告</strong>
+              <span>{insight.trap}</span>
+            </article>
+            <article>
               <strong>小测提示</strong>
               <span>{insight.quiz}</span>
             </article>
           </div>
+          {!!insight.collocations?.length && (
+            <div className="ai-chip-row">
+              {insight.collocations.slice(0, 5).map((item) => <span key={item}>{item}</span>)}
+            </div>
+          )}
           <small>生成时间：{insight.generatedAt} · {insight.provider || 'local'}</small>
           {insight.error && <small className="ai-error">接口提示：{insight.error}</small>}
         </div>
@@ -1487,7 +1587,7 @@ function SettingsView({ profile, setProfile, groups, progress, installedBooks, a
           <div><Cloud size={18} /><span>云同步状态</span></div>
           <SyncBadge status={profile.sync} lastSync={profile.lastSync} />
         </button>
-        <button onClick={() => setDialog('ai')}><div><Sparkles size={18} /><span>AI 辅助</span></div><small>本地生成 · 可接后端</small></button>
+        <button onClick={() => setDialog('ai')}><div><Sparkles size={18} /><span>AI 辅助</span></div><small>JSON 输出 · 队列预生成</small></button>
         <button onClick={() => setDialog('import')}><div><Upload size={18} /><span>导入词库</span></div><small>CSV / JSON</small></button>
         <button onClick={exportData}><div><Download size={18} /><span>导出数据</span></div><small>本地备份</small></button>
         <button onClick={() => setOfflineEnabled(!offlineEnabled)}>
@@ -1516,10 +1616,10 @@ function SettingsView({ profile, setProfile, groups, progress, installedBooks, a
             {dialog === 'ai' && (
               <>
                 <h2>AI 辅助</h2>
-                <p>当前版本使用本地生成器，能在词组对比页生成记忆口诀、差异总结和小测提示。生产环境建议接 Supabase Edge Function 或自有后端，避免在前端暴露模型密钥。</p>
+                <p>AI 由后端统一生成，输出固定 JSON：记忆口诀、差异总结、词形差异、词根抓手、搭配、易错警告、小测和例句。开始今日队列时会后台预生成，打开对比页优先读取缓存。</p>
                 <div className="modal-info-grid">
-                  <span>状态</span><strong>本地可用</strong>
-                  <span>后端</span><strong>预留接口</strong>
+                  <span>状态</span><strong>后端优先</strong>
+                  <span>缓存</span><strong>队列预生成</strong>
                   <span>已生成</span><strong>{Object.keys(aiInsights).length} 组</strong>
                 </div>
               </>
@@ -1714,6 +1814,7 @@ function App() {
   const [aiLoadingId, setAiLoadingId] = useState(null);
   const syncTimer = useRef(null);
   const lastPushedSnapshot = useRef('');
+  const aiPrefetching = useRef(new Set());
 
   useEffect(() => {
     if (!profile?.email) return;
@@ -1781,6 +1882,30 @@ function App() {
     applyAccountData(accountData, { ...nextProfile, ...syncState });
   };
 
+  useEffect(() => {
+    if (!supabase) return undefined;
+    let mounted = true;
+    const loginFromSession = async (session) => {
+      const user = session?.user;
+      if (!mounted || !user?.email) return;
+      await handleLogin(createProfile({
+        email: user.email,
+        plan: 'Supabase Sync',
+        authProvider: 'supabase',
+        userId: user.id
+      }));
+    };
+    supabase.auth.getSession().then(({ data }) => loginFromSession(data.session));
+    const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') loginFromSession(session);
+      if (event === 'SIGNED_OUT') setProfile(null);
+    });
+    return () => {
+      mounted = false;
+      subscription.subscription.unsubscribe();
+    };
+  }, []);
+
   const syncNow = async () => {
     if (!profile?.email || profile.email.endsWith('@lexipair.local')) {
       setProfile((current) => current ? { ...current, sync: 'offline', lastSync: '仅本机' } : current);
@@ -1797,12 +1922,47 @@ function App() {
     }
   };
 
+  const buildAiGroupPayload = (group) => ({
+    ...group,
+    compareWords: group.words.length === 1 ? findSimilarWords(group, group.words[0]) : []
+  });
+
+  const prefetchAiForQueue = async (queue) => {
+    const pending = queue
+      .filter((group) => {
+        const insight = aiInsights[group.id];
+        return !['openai', 'mimo'].includes(insight?.provider) && !aiPrefetching.current.has(group.id);
+      })
+      .slice(0, 20);
+    if (!pending.length) return;
+    pending.forEach((group) => aiPrefetching.current.add(group.id));
+    try {
+      const response = await apiFetch('/api/ai/batch-insights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          groups: pending.map(buildAiGroupPayload),
+          mode: 'daily-prefetch'
+        })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (data.insights) {
+        setAiInsights((current) => ({ ...current, ...data.insights }));
+      }
+    } catch {
+      // Prefetch is opportunistic; the compare page still has manual generation.
+    } finally {
+      pending.forEach((group) => aiPrefetching.current.delete(group.id));
+    }
+  };
+
   const openStudy = (group) => {
     setCompareFromStudy(false);
     setStudyQueue([group]);
     setStudyQueueIndex(0);
     setSelectedGroup(group);
     setMode('study');
+    prefetchAiForQueue([group]);
   };
 
   const openStudyQueue = (queue) => {
@@ -1813,6 +1973,7 @@ function App() {
     setStudyQueueIndex(0);
     setSelectedGroup(nextQueue[0]);
     setMode('study');
+    prefetchAiForQueue(nextQueue);
   };
 
   const openCompare = (group) => {
@@ -1822,6 +1983,16 @@ function App() {
   };
 
   const mark = (groupId, result, word) => {
+    const previous = progress[groupId] || { count: 0, forgot: 0, blurry: 0, know: 0, favorite: false, note: '' };
+    const eventSchedule = nextSchedule(result, previous);
+    writeStudyEvent({
+      groupId,
+      result,
+      word,
+      stage: eventSchedule.stage,
+      level: eventSchedule.level,
+      createdAt: new Date().toISOString()
+    }).catch(() => {});
     setProgress((current) => {
       const old = current[groupId] || { count: 0, forgot: 0, blurry: 0, know: 0, favorite: false, note: '' };
       const schedule = nextSchedule(result, old);
@@ -2016,7 +2187,10 @@ function App() {
         offlineEnabled={offlineEnabled}
         setOfflineEnabled={setOfflineEnabled}
         onImportGroups={importGroups}
-        onLogout={() => setProfile(null)}
+        onLogout={async () => {
+          if (supabase) await supabase.auth.signOut();
+          setProfile(null);
+        }}
       />
     );
   }, [active, activeBook, aiInsights, aiLoadingId, compareFromStudy, dailyLimit, groups, installedBooks, mode, offlineEnabled, profile, progress, selectedGroup, studyQueue, studyQueueIndex, todayBook]);

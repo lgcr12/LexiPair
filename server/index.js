@@ -4,6 +4,7 @@ import express from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import OpenAI from 'openai';
+import { createClient } from '@supabase/supabase-js';
 import { fetch as undiciFetch, ProxyAgent } from 'undici';
 
 const app = express();
@@ -15,12 +16,19 @@ const requestTimeoutMs = Number(process.env.OPENAI_TIMEOUT_MS || 30000);
 const proxyURL = process.env.OPENAI_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY;
 const apiKey = provider === 'mimo' ? process.env.MIMO_API_KEY : process.env.OPENAI_API_KEY;
 const dataDir = path.resolve(process.cwd(), process.env.SYNC_DATA_DIR || 'server-data/accounts');
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabase = supabaseUrl && supabaseServiceRoleKey
+  ? createClient(supabaseUrl, supabaseServiceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false }
+  })
+  : null;
 
 app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   return next();
 });
@@ -56,6 +64,51 @@ async function writeSyncedAccount(email, data) {
   return payload;
 }
 
+async function getAuthedUser(req) {
+  if (!supabase) return null;
+  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return null;
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data?.user) {
+    const authError = new Error('登录已过期，请重新通过邮箱验证登录');
+    authError.status = 401;
+    throw authError;
+  }
+  return data.user;
+}
+
+async function readSupabaseSnapshot(user) {
+  const { data, error } = await supabase
+    .from('account_snapshots')
+    .select('data, synced_at, updated_at')
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? {
+    ...(data.data || {}),
+    email: user.email,
+    syncedAt: data.synced_at || data.updated_at
+  } : null;
+}
+
+async function writeSupabaseSnapshot(user, data) {
+  const payload = {
+    ...data,
+    email: user.email,
+    syncedAt: new Date().toISOString()
+  };
+  const { error } = await supabase
+    .from('account_snapshots')
+    .upsert({
+      user_id: user.id,
+      email: user.email,
+      data: payload,
+      synced_at: payload.syncedAt
+    }, { onConflict: 'user_id' });
+  if (error) throw error;
+  return payload;
+}
+
 function fallbackInsight(group) {
   const words = group.words?.map((item) => item.word) || [];
   const meanings = group.words?.map((item) => `${item.word}: ${item.meaning}`).join('；') || '';
@@ -63,6 +116,10 @@ function fallbackInsight(group) {
     summary: `${words.join(' / ')} 的重点是区分词形、词义和固定搭配。`,
     mnemonic: group.words?.map((item) => `${item.word}: ${item.hint || item.meaning}`).join('；') || '',
     contrast: meanings,
+    shapeDiff: `观察 ${words.join(' / ')} 的首尾字母和中间差异。`,
+    rootTip: '先用核心义建立记忆，再补充派生义。',
+    collocations: group.words?.map((item) => item.collocation).filter(Boolean) || [],
+    trap: '常见错误是只看拼写相似，忽略词性、搭配和语境。',
     quiz: `先回忆核心释义，再判断词性和搭配。`,
     examples: group.words?.map((item) => item.sentence).filter(Boolean) || [],
     generatedAt: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
@@ -77,13 +134,20 @@ const insightSchema = {
     summary: { type: 'string' },
     mnemonic: { type: 'string' },
     contrast: { type: 'string' },
+    shapeDiff: { type: 'string' },
+    rootTip: { type: 'string' },
+    collocations: {
+      type: 'array',
+      items: { type: 'string' }
+    },
+    trap: { type: 'string' },
     quiz: { type: 'string' },
     examples: {
       type: 'array',
       items: { type: 'string' }
     }
   },
-  required: ['summary', 'mnemonic', 'contrast', 'quiz', 'examples']
+  required: ['summary', 'mnemonic', 'contrast', 'shapeDiff', 'rootTip', 'collocations', 'trap', 'quiz', 'examples']
 };
 
 app.get('/api/health', (_req, res) => {
@@ -94,27 +158,54 @@ app.get('/api/health', (_req, res) => {
     aiConfigured: Boolean(apiKey),
     timeoutMs: requestTimeoutMs,
     baseURL: baseURL || (provider === 'mimo' ? 'https://api.mimo-v2.com/v1' : 'https://api.openai.com/v1'),
-    proxyConfigured: Boolean(proxyURL)
+    proxyConfigured: Boolean(proxyURL),
+    syncProvider: supabase ? 'supabase' : 'file'
   });
 });
 
 app.get('/api/sync/:email', async (req, res) => {
   try {
-    const data = await readSyncedAccount(req.params.email);
-    res.json({ ok: true, data });
+    const user = await getAuthedUser(req);
+    const data = user ? await readSupabaseSnapshot(user) : await readSyncedAccount(req.params.email);
+    res.json({ ok: true, provider: user ? 'supabase' : 'file', data });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ ok: false, error: error.message });
+    res.status(error.status || 500).json({ ok: false, error: error.message });
   }
 });
 
 app.post('/api/sync/:email', async (req, res) => {
   try {
-    const data = await writeSyncedAccount(req.params.email, req.body?.data || {});
-    res.json({ ok: true, data });
+    const user = await getAuthedUser(req);
+    const data = user
+      ? await writeSupabaseSnapshot(user, req.body?.data || {})
+      : await writeSyncedAccount(req.params.email, req.body?.data || {});
+    res.json({ ok: true, provider: user ? 'supabase' : 'file', data });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ ok: false, error: error.message });
+    res.status(error.status || 500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post('/api/study-events', async (req, res) => {
+  try {
+    const user = await getAuthedUser(req);
+    if (!user) return res.json({ ok: true, provider: 'file', skipped: true });
+    const event = req.body?.event || {};
+    const { error } = await supabase.from('study_events').insert({
+      user_id: user.id,
+      group_id: event.groupId,
+      result: event.result,
+      word: event.word,
+      stage: event.stage,
+      level: event.level,
+      created_at: event.createdAt || new Date().toISOString()
+    });
+    if (error) throw error;
+    return res.json({ ok: true, provider: 'supabase' });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.status || 500).json({ ok: false, error: error.message });
   }
 });
 
@@ -173,11 +264,25 @@ function buildSystemPrompt() {
     'summary 说明这组词或这个单词最容易错在哪里。',
     'mnemonic 给一个可记忆的口诀或联想。',
     'contrast 对比词义、词性、搭配；如果只有一个词，就解释核心义和派生义。',
+    'shapeDiff 专门说明拼写形近点：不同字母、前后缀、词形结构。',
+    'rootTip 说明词根词缀或最短记忆抓手。',
+    'collocations 给 2-5 个高频搭配，数组。',
+    'trap 给一个考试中最容易踩的误区。',
     '如果输入里有 compareWords，contrast 必须逐个对比目标词与这些相近词，说明哪里像、哪里不同、考试怎么区分。',
     'quiz 给一个自测提示。',
     'examples 给 1-3 个短例句或填空提示。',
-    '只返回 JSON，不要 Markdown，不要代码块。JSON 字段必须是 summary, mnemonic, contrast, quiz, examples。'
+    '只返回 JSON，不要 Markdown，不要代码块。JSON 字段必须是 summary, mnemonic, contrast, shapeDiff, rootTip, collocations, trap, quiz, examples。'
   ].join('\n');
+}
+
+function normalizeInsight(parsed, group) {
+  const fallback = fallbackInsight(group);
+  return {
+    ...fallback,
+    ...parsed,
+    collocations: Array.isArray(parsed.collocations) ? parsed.collocations : fallback.collocations,
+    examples: Array.isArray(parsed.examples) ? parsed.examples : fallback.examples
+  };
 }
 
 function parseJsonText(text) {
@@ -256,7 +361,7 @@ app.post('/api/ai/insight', async (req, res) => {
       const parsed = await createMimoInsight(group, mode);
       return res.json({
         insight: {
-          ...parsed,
+          ...normalizeInsight(parsed, group),
           generatedAt: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
           provider: 'mimo',
           model
@@ -291,7 +396,7 @@ app.post('/api/ai/insight', async (req, res) => {
     const parsed = JSON.parse(response.output_text);
     res.json({
       insight: {
-        ...parsed,
+        ...normalizeInsight(parsed, group),
         generatedAt: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
         provider: 'openai',
         model
@@ -304,6 +409,56 @@ app.post('/api/ai/insight', async (req, res) => {
       insight: fallbackInsight(group)
     });
   }
+});
+
+app.post('/api/ai/batch-insights', async (req, res) => {
+  const groups = Array.isArray(req.body?.groups) ? req.body.groups.slice(0, 20) : [];
+  const mode = req.body?.mode || 'prefetch';
+  if (!groups.length) return res.status(400).json({ error: 'Missing groups' });
+  if (!apiKey) {
+    return res.status(503).json({
+      error: 'AI API key is not configured',
+      insights: Object.fromEntries(groups.map((group) => [group.id, fallbackInsight(group)]))
+    });
+  }
+  const insights = {};
+  const errors = {};
+  for (const group of groups) {
+    try {
+      const parsed = provider === 'mimo'
+        ? await createMimoInsight(group, mode)
+        : await (async () => {
+          const client = new OpenAI({
+            apiKey,
+            baseURL,
+            timeout: requestTimeoutMs,
+            fetchOptions: proxyURL ? { dispatcher: new ProxyAgent(proxyURL) } : undefined
+          });
+          const response = await client.responses.create({
+            model,
+            input: [
+              { role: 'system', content: buildSystemPrompt() },
+              { role: 'user', content: JSON.stringify(buildInsightPayload(group, mode)) }
+            ]
+          });
+          return parseJsonText(response.output_text);
+        })();
+      insights[group.id] = {
+        ...normalizeInsight(parsed, group),
+        generatedAt: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
+        provider,
+        model
+      };
+    } catch (error) {
+      errors[group.id] = publicErrorMessage(error);
+      insights[group.id] = {
+        ...fallbackInsight(group),
+        provider: 'local-fallback',
+        error: errors[group.id]
+      };
+    }
+  }
+  return res.json({ insights, errors });
 });
 
 app.listen(port, () => {
