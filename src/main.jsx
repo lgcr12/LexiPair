@@ -3,7 +3,6 @@ import { createRoot } from 'react-dom/client';
 import { AnimatePresence, motion } from 'framer-motion';
 import { createClient } from '@supabase/supabase-js';
 import {
-  Apple,
   ArrowDownToLine,
   BarChart3,
   BookOpen,
@@ -892,8 +891,8 @@ function LoginView({ onLogin }) {
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 260));
-      const loginEmail = mode === 'guest' ? 'guest@lexipair.local' : mode === 'apple' ? 'apple@lexipair.local' : normalized;
-      const plan = mode === 'apple' ? 'Apple ID' : mode === 'email' ? 'Email Sync' : 'Local First';
+      const loginEmail = mode === 'guest' ? 'guest@lexipair.local' : normalized;
+      const plan = mode === 'email' ? 'Email Sync' : 'Local First';
       await onLogin(createProfile({ email: loginEmail, plan }));
     } catch (loginError) {
       setError(loginError.message || '登录失败，请稍后重试');
@@ -910,9 +909,6 @@ function LoginView({ onLogin }) {
         <h1>在对比中记住易混词</h1>
         <p>登录后同步学习进度、错题、收藏、AI 结果和个人词库。Web 与 iOS 使用同一套后端账号数据。</p>
         <div className="login-actions">
-          <button className="apple-button" onClick={() => submit('apple')} disabled={loading}>
-            <Apple size={19} /> 使用 Apple 登录
-          </button>
           <label className="email-field">
             <Mail size={18} />
             <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="邮箱地址" type="email" />
@@ -1489,15 +1485,11 @@ function StatsView({ groups, progress, profile }) {
   );
 }
 
-function SettingsView({ profile, setProfile, groups, progress, installedBooks, aiInsights, offlineEnabled, setOfflineEnabled, onImportGroups, onLogout }) {
+function SettingsView({ profile, groups, progress, installedBooks, aiInsights, offlineEnabled, setOfflineEnabled, onImportGroups, onSyncNow, onLogout }) {
   const [dialog, setDialog] = useState(null);
   const [importText, setImportText] = useState('');
   const [importMessage, setImportMessage] = useState('');
-
-  const cycleSync = () => {
-    const next = profile.sync === 'synced' ? 'syncing' : profile.sync === 'syncing' ? 'offline' : profile.sync === 'offline' ? 'failed' : 'synced';
-    setProfile({ ...profile, sync: next, lastSync: next === 'synced' ? '刚刚' : '待处理' });
-  };
+  const syncModeLabel = profile.authProvider === 'supabase' ? 'Supabase' : profile.email.endsWith('@lexipair.local') ? '本机模式' : '开发同步';
 
   const exportData = () => {
     const payload = {
@@ -1583,7 +1575,7 @@ function SettingsView({ profile, setProfile, groups, progress, installedBooks, a
         </div>
       </div>
       <div className="settings-list">
-        <button onClick={cycleSync}>
+        <button onClick={onSyncNow}>
           <div><Cloud size={18} /><span>云同步状态</span></div>
           <SyncBadge status={profile.sync} lastSync={profile.lastSync} />
         </button>
@@ -1597,6 +1589,11 @@ function SettingsView({ profile, setProfile, groups, progress, installedBooks, a
       </div>
       <div className="chart-card">
         <div className="section-title"><h3>登录设备</h3></div>
+        <div className="device-row">
+          <Cloud size={19} />
+          <span>同步模式</span>
+          <em>{syncModeLabel}</em>
+        </div>
         {(profile.devices || defaultProfile.devices).map((device) => {
           const Icon = deviceIcons[device.iconKey] || (device.id === 'web' ? Laptop : Smartphone);
           return (
@@ -2177,19 +2174,19 @@ function App() {
     if (active === 'review') return <ReviewView groups={groups} progress={progress} onStart={openStudy} onOpenGroup={openCompare} />;
     if (active === 'stats') return <StatsView groups={groups} progress={progress} profile={profile} />;
     return (
-      <SettingsView
-        profile={profile}
-        setProfile={setProfile}
-        groups={groups}
-        progress={progress}
-        installedBooks={installedBooks}
-        aiInsights={aiInsights}
-        offlineEnabled={offlineEnabled}
-        setOfflineEnabled={setOfflineEnabled}
-        onImportGroups={importGroups}
-        onLogout={async () => {
-          if (supabase) await supabase.auth.signOut();
-          setProfile(null);
+        <SettingsView
+          profile={profile}
+          groups={groups}
+          progress={progress}
+          installedBooks={installedBooks}
+          aiInsights={aiInsights}
+          offlineEnabled={offlineEnabled}
+          setOfflineEnabled={setOfflineEnabled}
+          onImportGroups={importGroups}
+          onSyncNow={syncNow}
+          onLogout={async () => {
+            if (supabase) await supabase.auth.signOut();
+            setProfile(null);
         }}
       />
     );

@@ -251,7 +251,6 @@ p {
   margin-top: 6px;
 }
 
-.apple-button,
 .ghost-button,
 .email-field,
 .search-box {
@@ -265,11 +264,6 @@ p {
   border: 1px solid rgba(0, 0, 0, 0.045);
   border-radius: 18px;
   font-weight: 800;
-}
-
-.apple-button {
-  color: #fff;
-  background: #1d1d1f;
 }
 
 .ghost-button {
@@ -1640,7 +1634,6 @@ p {
       #000;
   }
 
-  .apple-button,
   .filter-row button.active {
     background: #f5f5f7;
     color: #1d1d1f;
